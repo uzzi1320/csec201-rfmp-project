@@ -1,6 +1,8 @@
+import os
 import socket
 import threading
-from packet_utils import encode_packet, PacketReceiver
+import shutil
+from packet_utils import encode_packet, encode_payload, decode_packet, PacketReceiver
 
 HOST = '0.0.0.0' # Listening on all network interfaces
 PORT = 5000
@@ -44,10 +46,109 @@ def handle_client(conn, addr):
         #reply with Confirm-Connection-Packet
         response = encode_packet(['CC','ok'])
         conn.sendall(response)
-        
+
     else:
         print(f"Unexpected first packet type: {packet_type}")
-    conn.close()
+
+    while True:
+        # blocks until the client's next packet arrives
+        fields = receiver.get_packet()
+
+        if fields is None:
+            # client disconnected without sending a proper closing packet
+            print(f"Client {addr} disconnected")
+            break
+
+        packet_type = fields[0]
+
+        if packet_type == 'EX':
+            # client sent the closing packet
+            print(f"Client {addr} sent closing packet")
+            break
+
+        elif packet_type == 'CM':
+            command = fields[1]
+            args = fields[2:]
+
+            if command == 'mkdir':
+                try:
+                    os.mkdir(args[0])
+                    conn.sendall(encode_packet(['OK','mkdir']))
+                except FileExistsError:
+                    conn.sendall(encode_packet(['EE','4','Folder already exisits']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'rmdir':
+                try:
+                    os.rmdir(args[0])
+                    conn.sendall(encode_packet(['OK','rmdir']))
+                except FileNotFoundError:
+                    conn.sendall(encode_packet(['EE','3','File not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'del':
+                try:
+                    os.remove(args[0])
+                    conn.sendall(encode_packet(['OK','del']))
+                except FileNotFoundError:
+                    conn.sendall(encode_packet(['EE','3','File not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'ren':
+                try:
+                    os.rename(args[0],args[1])
+                    conn.sendall(encode_packet(['OK','ren']))
+                except FileNotFoundError:
+                    conn.sendall(encode_packet(['EE','3','File or Folder not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'cd':
+                try:
+                    os.chdir(args[0])
+                    conn.sendall(encode_packet(['OK','cd']))
+                except FileNotFoundError:
+                    conn.sendall(encode_packet(['EE','3','File not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'copy':
+                try:
+                    shutil.copy(args[0], args[1])
+                    conn.sendall(encode_packet(['OK','copy']))
+                except FileNotFoundError:
+                    conn.sendall(encode_packet(['EE','3','File not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'touch':
+                try:
+                    open(args[0],'a').close()
+                    conn.sendall(encode_packet(['OK','touch']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'exists':
+                result = 'yes' if os.path.exists(args[0]) else 'no'
+                conn.sendall(encode_packet(['OK',result]))
+
+            elif command == 'pwd':
+                conn.sendall(encode_packet(['OK',encode_payload(os.getcwd())]))
+
+            elif command == 'list':
+                entries = ';'.join(os.listdir('.'))
+                conn.sendall(encode_packet(['OK',encode_payload(entries)]))
+
+            else:
+                conn.sendall(encode_packet(['EE','2',f'Unknown command: {command}']))
+            
+        else:
+            print(f"Received packet type: {packet_type}")
+
+    conn.close() 
 
 while True:
     conn, addr = server_socket.accept()
