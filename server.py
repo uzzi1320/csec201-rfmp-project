@@ -2,7 +2,7 @@ import os
 import socket
 import threading
 import shutil
-from packet_utils import encode_packet, encode_payload, decode_packet, PacketReceiver
+from packet_utils import encode_packet, encode_payload, decode_payload, PacketReceiver
 
 HOST = '0.0.0.0' # Listening on all network interfaces
 PORT = 5000
@@ -70,7 +70,20 @@ def handle_client(conn, addr):
             command = fields[1]
             args = fields[2:]
 
-            if command == 'mkdir':
+            if command == 'openWrite':
+                try:
+                    data_fields = receiver.get_packet()
+                    if data_fields is None or data_fields[0] != 'DP':
+                        conn.sendall(encode_packet(['EE','6','Expected Data-Packet after openWrite']))
+                    else:
+                        content = decode_payload(data_fields[1])
+                        with open(args[0],'wb') as f:
+                            f.write(content)
+                        conn.sendall(encode_packet(['OK','openWrite']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
+
+            elif command == 'mkdir':
                 try:
                     os.mkdir(args[0])
                     conn.sendall(encode_packet(['OK','mkdir']))
@@ -141,6 +154,16 @@ def handle_client(conn, addr):
             elif command == 'list':
                 entries = ';'.join(os.listdir('.'))
                 conn.sendall(encode_packet(['OK',encode_payload(entries)]))
+
+            elif command == 'openRead':
+                try:
+                    with open(args[0], 'rb') as f:
+                        content = f.read()
+                    conn.sendall(encode_packet(['DP', encode_payload(content)]))
+                except FileNotFoundError:
+                    conn.sendall(encode_payload(['EE','3','File not found']))
+                except Exception as e:
+                    conn.sendall(encode_packet(['EE','5',str(e)]))
 
             else:
                 conn.sendall(encode_packet(['EE','2',f'Unknown command: {command}']))
