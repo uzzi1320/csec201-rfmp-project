@@ -4,6 +4,15 @@ import threading
 import shutil
 from packet_utils import encode_packet, encode_payload, decode_payload, PacketReceiver
 
+# Error codes for Exception-Packets (EE)
+ERR_UNKNOWN_PACKET = '1'
+ERR_UNKNOWN_COMMAND = '2'
+ERR_NOT_FOUND = '3'
+ERR_ALREADY_EXISTS = '4'
+ERR_GENERAL = '5'
+ERR_EXPECTED_DATA_PACKET = '6'
+
+
 HOST = '0.0.0.0' # Listening on all network interfaces
 PORT = 5000
 
@@ -70,79 +79,84 @@ def handle_client(conn, addr):
             command = fields[1]
             args = fields[2:]
 
+            # Each filesystem command below follows the same pattern:
+            # perform the OS operation, reply OK on success, EE on failure
+
             if command == 'openWrite':
+                # openWrite needs a second packet - the file content itself -
+                # since it doesn't fit in the CM command packet's fields
                 try:
                     data_fields = receiver.get_packet()
                     if data_fields is None or data_fields[0] != 'DP':
-                        conn.sendall(encode_packet(['EE','6','Expected Data-Packet after openWrite']))
+                        conn.sendall(encode_packet(['EE','ERR_EXPECTED_DATA_PACKET','Expected Data-Packet after openWrite']))
                     else:
                         content = decode_payload(data_fields[1])
                         with open(args[0],'wb') as f:
                             f.write(content)
                         conn.sendall(encode_packet(['OK','openWrite']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'mkdir':
                 try:
                     os.mkdir(args[0])
                     conn.sendall(encode_packet(['OK','mkdir']))
                 except FileExistsError:
-                    conn.sendall(encode_packet(['EE','4','Folder already exisits']))
+                    conn.sendall(encode_packet(['EE','ERR_ALREADY_EXISTS','Folder already exisits']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'rmdir':
                 try:
                     os.rmdir(args[0])
                     conn.sendall(encode_packet(['OK','rmdir']))
                 except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','3','File not found']))
+                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'del':
                 try:
                     os.remove(args[0])
                     conn.sendall(encode_packet(['OK','del']))
                 except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','3','File not found']))
+                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'ren':
                 try:
                     os.rename(args[0],args[1])
                     conn.sendall(encode_packet(['OK','ren']))
                 except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','3','File or Folder not found']))
+                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File or Folder not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'cd':
                 try:
                     os.chdir(args[0])
                     conn.sendall(encode_packet(['OK','cd']))
                 except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','3','File not found']))
+                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'copy':
                 try:
                     shutil.copy(args[0], args[1])
                     conn.sendall(encode_packet(['OK','copy']))
                 except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','3','File not found']))
+                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'touch':
                 try:
                     open(args[0],'a').close()
                     conn.sendall(encode_packet(['OK','touch']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             elif command == 'exists':
                 result = 'yes' if os.path.exists(args[0]) else 'no'
@@ -152,6 +166,7 @@ def handle_client(conn, addr):
                 conn.sendall(encode_packet(['OK',encode_payload(os.getcwd())]))
 
             elif command == 'list':
+                # base64-wrapped since folder names could contain commas
                 entries = ';'.join(os.listdir('.'))
                 conn.sendall(encode_packet(['OK',encode_payload(entries)]))
 
@@ -161,12 +176,12 @@ def handle_client(conn, addr):
                         content = f.read()
                     conn.sendall(encode_packet(['DP', encode_payload(content)]))
                 except FileNotFoundError:
-                    conn.sendall(encode_payload(['EE','3','File not found']))
+                    conn.sendall(encode_payload(['EE','ERR_NOT_FOUND','File not found']))
                 except Exception as e:
-                    conn.sendall(encode_packet(['EE','5',str(e)]))
+                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
 
             else:
-                conn.sendall(encode_packet(['EE','2',f'Unknown command: {command}']))
+                conn.sendall(encode_packet(['EE','ERR_UNKNOWN_COMMAND',f'Unknown command: {command}']))
             
         else:
             print(f"Received packet type: {packet_type}")
