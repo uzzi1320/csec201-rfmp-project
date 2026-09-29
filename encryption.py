@@ -140,3 +140,31 @@ def hybrid_decrypt(private_pem: bytes, blob: bytes, aad: Optional[bytes] = None)
 
     aes_key = rsa_decrypt(private_pem, encrypted_key)
     return aes_decrypt(aes_key, encrypted_msg, aad)
+def encrypt_packet_fields(fields, aes_key, aad: Optional[bytes] = None):
+    """Convert normal packet fields into an encrypted EN packet."""
+    raw = ",".join(fields).encode("utf-8")
+    blob = aes_encrypt(aes_key, raw, aad)
+    return ["EN", bytes_to_b64(blob)]
+
+
+def decrypt_packet_fields(fields, aes_key, aad: Optional[bytes] = None):
+    """Convert an EN packet back into normal packet fields."""
+    if not fields or fields[0] != "EN" or len(fields) < 2:
+        raise ValueError("Not an encrypted packet")
+
+    blob = b64_to_bytes(fields[1])
+    raw = aes_decrypt(aes_key, blob, aad).decode("utf-8")
+    return raw.split(",")
+
+
+def make_key_packet(public_pem: bytes, aes_key: bytes):
+    """Client sends KM,<RSA-encrypted AES key>."""
+    return ["KM", bytes_to_b64(rsa_encrypt(public_pem, aes_key))]
+
+
+def read_key_packet(private_pem: bytes, fields):
+    """Server reads KM packet and gets AES key."""
+    if not fields or fields[0] != "KM" or len(fields) < 2:
+        raise ValueError("Expected KM packet")
+
+    return rsa_decrypt(private_pem, b64_to_bytes(fields[1]))
