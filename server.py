@@ -1,17 +1,13 @@
 import os
 import socket
 import threading
-import shutil
 from packet_utils import encode_packet, encode_payload, decode_payload, PacketReceiver
 
 # Error codes for Exception-Packets (EE)
-ERR_UNKNOWN_PACKET = '1'
-ERR_UNKNOWN_COMMAND = '2'
-ERR_NOT_FOUND = '3'
-ERR_ALREADY_EXISTS = '4'
-ERR_GENERAL = '5'
-ERR_EXPECTED_DATA_PACKET = '6'
-
+ERR_BAD_REQUEST = '1'
+ERR_NOT_FOUND = '2'
+ERR_COMMAND_FAILED = '3'
+ERR_SERVER = '4'
 
 HOST = '0.0.0.0' # Listening on all network interfaces
 PORT = 5000
@@ -23,13 +19,82 @@ server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server_socket.bind((HOST,PORT))
 server_socket.listen(5) # allow upto 5 pending connections in queue
+server_socket.settimeout(1.0)
 print(f"Server listening on {HOST}:{PORT}")
 
+def send_error(conn, code, description):
+    """ Send an exception packet: (EE, error_code, description)."""
+    #flattening commas and newlines since they would break packet framing
+    description = str(description).replace(',',';').replace('\r',' ').replace('\n',' ')
+    conn.sendall(encode_packet(['EE', code, description]))
+
+def run_prompt_command(conn, command_text):
+    """Runs a system command sent as (CM, prompt, full command text),
+    eg. 'mkdir folder1' or 'ren homework1 homework2'.
+    Replies with SC on success or EE on failure."""
+
+    parts = command_text.split(None, 1)
+    if not parts:
+        send_error(conn, ERR_BAD_REQUEST, 'Empty command')
+        return
+
+    #cd has to change the server's own folder. os.system runs each command in its own shell, so a cd run through it would be forgotten straight away.    
+    if parts[0].lower() =='cd':
+        if len(parts) == 1:
+            send_error(conn, ERR_BAD_REQUEST, 'cd needs a folder')
+            return
+        try:
+            os.chdir(parts[1].strip().strip('"'))
+            conn.sendall(encode_packet(['SC']))
+        except FileNotFoundError:
+            send_error(conn, ERR_NOT_FOUND, 'Folder not found')
+        except Exception as e:
+            send_error(conn, ERR_COMMAND_FAILED, e)
+        return
+
+    exit_code = os.system(command_text)
+    if exit_code == 0:
+        conn.sendall(encode_packet(['SC']))
+    else:
+        send_error(conn, ERR_COMMAND_FAILED, 'Command failed')
+
+def open_read(conn, filename):
+    """
+    openRead sends the file's content to the client in a Data-Packet, then ends with a SC packet
+    """
+    try:
+        with open(filename, 'rb') as f: #rb is to read raw bytes
+            content = f.read()
+    except FileNotFoundError:
+        send_error(conn, ERR_NOT_FOUND, 'File not found')
+        return
+    except Exception as e:
+        send_error(conn, ERR_SERVER, e)
+        return
+
+    conn.sendall(encode_packet(['DP', encode_payload(content)]))
+    conn.sendall(encode_packet(['SC']))
+
+def open_write(conn, receiver, filename):
+    """
+    the files content arrive in a seperate Data-PAcket right after the command, openWrite saves it to the file
+    """
+    data = receiver.get_packet()
+    if data is None or data[0] != 'DP' or len(data) < 2:
+        send_error(conn, ERR_BAD_REQUEST, 'Expected Data-Packet after openWrite')
+        return
+    try:
+        content = decode_payload(data[1])
+        with open(filename, 'wb') as f:
+            f.write(content)
+        conn.sendall(encode_packet(['SC']))
+    except Exception as e:
+        send_error(conn, ERR_SERVER, e)
 
 def handle_client(conn, addr):
     """
     Runs in its own thread for each connected client.
-    This will eventually contain the full setup phase and command loop for that client
+    Handles one client: setup phase, then the command loop until the client closes.
     """
 
     print(f"Handling client {addr}")
@@ -46,18 +111,22 @@ def handle_client(conn, addr):
         conn.close()
         return
 
-    packet_type = fields[0]
+    if (len(fields) != 4 or fields[0] != 'SS' or fields[1] != 'RFMP'
+        or fields[2] != 'v1.0' or fields[3] not in ('0','1')):
+        send_error(conn, ERR_BAD_REQUEST,'Invalid Start-Packet')
+        conn.close()
+        return
 
-    if packet_type == 'SS':
-        security_flag = fields[3]
-        print(f"Received Start-Packet, security flag={security_flag}")
+    security_flag = fields[3]
+    print(f"Received Start-Packet, security flag={security_flag}")
 
-        #reply with Confirm-Connection-Packet
-        response = encode_packet(['CC','ok'])
-        conn.sendall(response)
+    if security_flag == '1':
+        # TODO: secured setup
+        send_error(conn, ERR_SERVER, 'Secure communication is not available yet')
+        conn.close()
+        return
 
-    else:
-        print(f"Unexpected first packet type: {packet_type}")
+    conn.sendall(encode_packet(['CC']))
 
     while True:
         # blocks until the client's next packet arrives
@@ -70,129 +139,47 @@ def handle_client(conn, addr):
 
         packet_type = fields[0]
 
-        if packet_type == 'EX':
+        if packet_type == 'End':
             # client sent the closing packet
-            print(f"Client {addr} sent closing packet")
+            print(f"Client {addr} sent Close-Packet")
             break
 
-        elif packet_type == 'CM':
-            command = fields[1]
-            args = fields[2:]
+        # anything else must be a Command-Packet: (CM, command_type, argument)
+        if packet_type != 'CM' or len(fields) < 3:
+            send_error(conn, ERR_BAD_REQUEST, 'Unknown or malformed packet')
+            continue
 
-            # Each filesystem command below follows the same pattern:
-            # perform the OS operation, reply OK on success, EE on failure
+        command_type = fields[1]
+        # rejoin the argument in case the command text itself contained commas
+        argument = ','.join(fields[2:])
 
-            if command == 'openWrite':
-                # openWrite needs a second packet - the file content itself -
-                # since it doesn't fit in the CM command packet's fields
-                try:
-                    data_fields = receiver.get_packet()
-                    if data_fields is None or data_fields[0] != 'DP':
-                        conn.sendall(encode_packet(['EE','ERR_EXPECTED_DATA_PACKET','Expected Data-Packet after openWrite']))
-                    else:
-                        content = decode_payload(data_fields[1])
-                        with open(args[0],'wb') as f:
-                            f.write(content)
-                        conn.sendall(encode_packet(['OK','openWrite']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'mkdir':
-                try:
-                    os.mkdir(args[0])
-                    conn.sendall(encode_packet(['OK','mkdir']))
-                except FileExistsError:
-                    conn.sendall(encode_packet(['EE','ERR_ALREADY_EXISTS','Folder already exisits']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'rmdir':
-                try:
-                    os.rmdir(args[0])
-                    conn.sendall(encode_packet(['OK','rmdir']))
-                except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'del':
-                try:
-                    os.remove(args[0])
-                    conn.sendall(encode_packet(['OK','del']))
-                except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'ren':
-                try:
-                    os.rename(args[0],args[1])
-                    conn.sendall(encode_packet(['OK','ren']))
-                except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File or Folder not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'cd':
-                try:
-                    os.chdir(args[0])
-                    conn.sendall(encode_packet(['OK','cd']))
-                except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'copy':
-                try:
-                    shutil.copy(args[0], args[1])
-                    conn.sendall(encode_packet(['OK','copy']))
-                except FileNotFoundError:
-                    conn.sendall(encode_packet(['EE','ERR_NOT_FOUND','File not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'touch':
-                try:
-                    open(args[0],'a').close()
-                    conn.sendall(encode_packet(['OK','touch']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            elif command == 'exists':
-                result = 'yes' if os.path.exists(args[0]) else 'no'
-                conn.sendall(encode_packet(['OK',result]))
-
-            elif command == 'pwd':
-                conn.sendall(encode_packet(['OK',encode_payload(os.getcwd())]))
-
-            elif command == 'list':
-                # base64-wrapped since folder names could contain commas
-                entries = ';'.join(os.listdir('.'))
-                conn.sendall(encode_packet(['OK',encode_payload(entries)]))
-
-            elif command == 'openRead':
-                try:
-                    with open(args[0], 'rb') as f:
-                        content = f.read()
-                    conn.sendall(encode_packet(['DP', encode_payload(content)]))
-                except FileNotFoundError:
-                    conn.sendall(encode_payload(['EE','ERR_NOT_FOUND','File not found']))
-                except Exception as e:
-                    conn.sendall(encode_packet(['EE','ERR_GENERAL',str(e)]))
-
-            else:
-                conn.sendall(encode_packet(['EE','ERR_UNKNOWN_COMMAND',f'Unknown command: {command}']))
-            
+        if command_type == 'prompt':
+            run_prompt_command(conn, argument)
+        elif command_type == 'openRead':
+            open_read(conn, argument)
+        elif command_type == 'openWrite':
+            open_write(conn, receiver, argument)
         else:
-            print(f"Received packet type: {packet_type}")
+            send_error(conn, ERR_BAD_REQUEST, f'Unknown command type: {command_type}')
 
     conn.close() 
 
-while True:
-    conn, addr = server_socket.accept()
-    print(f"Connection from {addr}")
+try:
+    while True:
+        try:
+            conn, addr = server_socket.accept()
+        except socket.timeout:
+            # nobody connected during this second; loop again so Ctrl+C gets noticed
+            continue
 
-    #handing this client off to its own thread so main loop can continue
-    # goes back to accept() and serves the next client imediately.
-    thread = threading.Thread(target=handle_client, args=(conn, addr))
-    thread.start()
+        conn.settimeout(None)  # the client's socket should wait normally, no timeout
+        print(f"Connection from {addr}")
+
+        # hand this client off to its own thread so the loop can go straight
+        # back to accept() and serve the next client
+        thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+        thread.start()
+except KeyboardInterrupt:
+    print("\nServer shutting down")
+finally:
+    server_socket.close()
