@@ -62,3 +62,31 @@ def rsa_decrypt(private_pem: bytes, ciphertext: bytes) -> bytes:
             label=None,
         ),
     )
+
+def generate_aes_key() -> bytes:
+    """32-byte AES-256 key."""
+    return os.urandom(AES_KEY_SIZE)
+
+
+def aes_encrypt(key: bytes, plaintext: bytes, aad: Optional[bytes] = None) -> bytes:
+    """Return nonce + AES-GCM ciphertext/tag."""
+    if len(key) not in (16, 24, 32):
+        raise ValueError("AES key must be 16, 24, or 32 bytes")
+
+    nonce = os.urandom(GCM_NONCE_SIZE)
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
+    return nonce + ciphertext
+
+
+def aes_decrypt(key: bytes, blob: bytes, aad: Optional[bytes] = None) -> bytes:
+    """Input is nonce + AES-GCM ciphertext/tag."""
+    if len(key) not in (16, 24, 32):
+        raise ValueError("AES key must be 16, 24, or 32 bytes")
+    if len(blob) < GCM_NONCE_SIZE + 16:
+        raise ValueError("AES blob too short")
+
+    nonce = blob[:GCM_NONCE_SIZE]
+    ciphertext = blob[GCM_NONCE_SIZE:]
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, aad)
