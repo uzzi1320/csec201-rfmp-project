@@ -90,3 +90,21 @@ def aes_decrypt(key: bytes, blob: bytes, aad: Optional[bytes] = None) -> bytes:
     ciphertext = blob[GCM_NONCE_SIZE:]
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, aad)
+
+def caesar_encrypt(text: str, shift: int) -> str:
+    shift %= 26
+    result = []
+
+    for ch in text:
+        if "a" <= ch <= "z":
+            result.append(chr((ord(ch) - ord("a") + shift) % 26 + ord("a")))
+        elif "A" <= ch <= "Z":
+            result.append(chr((ord(ch) - ord("A") + shift) % 26 + ord("A")))
+        else:
+            result.append(ch)
+
+    return "".join(result)
+
+
+def caesar_decrypt(text: str, shift: int) -> str:
+    return caesar_encrypt(text, -shift)
