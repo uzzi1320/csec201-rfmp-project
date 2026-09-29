@@ -108,3 +108,35 @@ def caesar_encrypt(text: str, shift: int) -> str:
 
 def caesar_decrypt(text: str, shift: int) -> str:
     return caesar_encrypt(text, -shift)
+
+def bytes_to_b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("utf-8")
+
+
+def b64_to_bytes(data: str) -> bytes:
+    return base64.b64decode(data.encode("utf-8"))
+
+
+def hybrid_encrypt(public_pem: bytes, plaintext: bytes, aad: Optional[bytes] = None) -> bytes:
+    """RSA-encrypt an AES key, then AES-GCM encrypt the message."""
+    aes_key = generate_aes_key()
+    encrypted_key = rsa_encrypt(public_pem, aes_key)
+    encrypted_msg = aes_encrypt(aes_key, plaintext, aad)
+
+    return len(encrypted_key).to_bytes(2, "big") + encrypted_key + encrypted_msg
+
+
+def hybrid_decrypt(private_pem: bytes, blob: bytes, aad: Optional[bytes] = None) -> bytes:
+    if len(blob) < 2:
+        raise ValueError("Hybrid blob too short")
+
+    key_len = int.from_bytes(blob[:2], "big")
+
+    if len(blob) < 2 + key_len:
+        raise ValueError("Hybrid blob missing RSA key")
+
+    encrypted_key = blob[2:2 + key_len]
+    encrypted_msg = blob[2 + key_len:]
+
+    aes_key = rsa_decrypt(private_pem, encrypted_key)
+    return aes_decrypt(aes_key, encrypted_msg, aad)
