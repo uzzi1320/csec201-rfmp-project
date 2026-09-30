@@ -13,7 +13,7 @@ DELIMITER = ','
 TERMINATOR = '\n'
 ENCODING = 'utf-8'
 
-def encode_packets(fields):
+def encode_packet(fields):
     """
     This method turns a list of fields into raw bytes to send over a socket.
     """
