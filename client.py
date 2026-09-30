@@ -5,8 +5,6 @@ import sys
 
 from packet_utils import encode_payload, decode_payload, PacketReceiver
 
-# The shared module defines encode_packets (plural) while server.py imports encode_packet
-# (singular). Accept either name so the client works whichever one ends up on main.
 try:
     from packet_utils import encode_packet
 except ImportError:
@@ -34,11 +32,6 @@ PROMPT_COMMANDS = {
     '5': ('ren', ['Current name', 'New name']),
 }
 
-
-# ----------------------------------------------------------------------
-# Small helpers for sending and receiving packets
-# ----------------------------------------------------------------------
-
 def send_packet(sock, fields):
     """Encode a list of fields as one RFMP packet and send it."""
     sock.sendall(encode_packet(fields))
@@ -58,3 +51,27 @@ def show_error(fields):
     description = ','.join(fields[2:]) if len(fields) > 2 else 'No description'
     name = ERROR_NAMES.get(code, 'Unknown error')
     print(f'[ERROR {code} - {name}] {description}')
+
+class Session:
+
+    def __init__(self, algorithm=None, key=None, enc=None):
+        self.algorithm = algorithm
+        self.key = key
+        self.enc = enc
+
+    def encrypt_text(self,text):
+        if self.algorithm == 'AES':
+            data = self.enc.aes_encrypt(self.key, text.encode('utf-8'))
+        elif self.algorithm == 'Caesar':
+            data = self.enc.ceasar_encrypt(text, self.key).encode('utf-8')
+        else:
+            data = text.encode('utf-8')
+        return encode_payload(data)
+
+    def decrypt_text(self,field):
+        data = decode_payload(field)
+        if self.algorithm == 'AES':
+            data = self.enc.aes_decrypt(self.key, data)
+        elif self.algorithm == 'Ceasar':
+            data = self.enc.caesar_decrypt(data.decode('utf-8'), self.key).encode('utf-8')
+        return data.decode('utf-8', errors='replace')
