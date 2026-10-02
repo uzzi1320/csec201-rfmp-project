@@ -64,8 +64,41 @@ static int recv_packet(sock_t s, char *buf, size_t cap)
     buf[i] = '\0';                           // end the C string
     return (int)i;                           // number of characters in the packet
 }
-
-int main(void)
+int main(int argc, char *argv[])
 {
+    const char *host = (argc > 1) ? argv[1] : DEFAULT_HOST;      // IP from args or default
+    int port         = (argc > 2) ? atoi(argv[2]) : DEFAULT_PORT; // port from args or default
+    const char *file = (argc > 3) ? argv[3] : DEFAULT_FILE;      // file name from args or default
+    char line[LINE_MAX_LEN];                 // holds packets we receive
+    char out[LINE_MAX_LEN];                  // holds packets we build to send
+
+
+#ifdef _WIN32
+    WSADATA wsa;                             // Windows-only: start the socket library
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        fprintf(stderr, "WSAStartup failed\n");
+        return 1;
+    }
+#endif
+
+    /* ---------- connect to the server ---------- */
+    sock_t sock = socket(AF_INET, SOCK_STREAM, 0);   // create a TCP socket (IPv4)
+    if (sock == INVALID_SOCKET) { perror("socket"); return 1; }  // stop if it failed
+
+    struct sockaddr_in addr;                 // server address structure
+    memset(&addr, 0, sizeof(addr));          // zero it so no garbage values
+    addr.sin_family = AF_INET;               // IPv4
+    addr.sin_port = htons((unsigned short)port);  // port in network byte order
+    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {  // convert "127.0.0.1" to binary
+        fprintf(stderr, "Bad IP address: %s\n", host);
+        return 1;
+    }
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {  // open the connection
+        perror("connect");                   // server not running / wrong port
+        return 1;
+    }
+    printf("[C client] Connected to %s:%d\n", host, port);
+
+
     return 0;
 }
