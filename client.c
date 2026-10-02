@@ -99,6 +99,23 @@ int main(int argc, char *argv[])
     }
     printf("[C client] Connected to %s:%d\n", host, port);
 
+    /* ---------- setup phase ---------- */
+    if (send_all(sock, "SS,RFMP,v1.0,0\n") < 0) {    // Start-Packet, 0 = no encryption
+        fprintf(stderr, "send failed\n");
+        return 1;
+    }
+    printf("[C client] Sent Start-Packet: SS,RFMP,v1.0,0\n");
+
+    if (recv_packet(sock, line, sizeof(line)) < 0) { // wait for the server's answer
+        fprintf(stderr, "Server closed connection during setup\n");
+        return 1;
+    }
+    if (strcmp(line, "CC") != 0) {           // must be exactly CC (Confirm-Connection)
+        fprintf(stderr, "Expected CC, got: %s\n", line);
+        return 1;
+    }
+    printf("[C client] Got Confirm-Connection-Packet (CC)\n");
+
 
     return 0;
 }
