@@ -29,4 +29,13 @@ def show_result(reply):
         print(f'Error {reply[1]}: {reply[2]}')
     else: 
         print('Unexpected reply:', reply)
-        
+
+def setup_phase(sock,receiver):
+    #sends the start-packet and checks the servers answer with CC
+    send_packet(sock, ['SS','RFMP', 'v1.0', '0'])
+    reply = read_reply(receiver)
+    if reply[0] == 'CC':
+        print('Connected to the server')
+        return True
+    show_result(reply)
+    return False
