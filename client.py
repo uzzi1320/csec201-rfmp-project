@@ -39,3 +39,33 @@ def setup_phase(sock,receiver):
         return True
     show_result(reply)
     return False
+
+def run_prompt(sock, receiver, command):
+    #asks server to run commands 
+    send_packet(sock, ['CM', 'prompt', command])
+    show_result(read_reply(receiver))
+
+def read_file(sock, receiver, filename):
+    #asks server for a file, it answers with a data packet and then SC
+    send_packet(sock, ['CM', 'openRead', filename])
+    reply = read_reply(receiver)
+    if reply[0] == 'DP':
+        print('---- file content ----')
+        print(decode_payload(reply[1]).decode('utf-8'))
+        print('----------------------')
+        reply =  read_reply(receiver) #the SC packet that comes after the data
+    show_result(reply)
+
+def write_file(sock, receiver, filename):
+    #sends the file & text as data packet, server saves it
+    lines = []
+    while True:
+        line = input()
+        if line == '.':
+            break
+        lines.append(line)
+    text = '\n'.join(lines)
+
+    send_packet(sock, ['CM', 'openWrite', filename])
+    send_packet(sock, ['DP', encode_payload(text)])
+    show_result(read_reply(receiver))
