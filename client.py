@@ -69,3 +69,44 @@ def write_file(sock, receiver, filename):
     send_packet(sock, ['CM', 'openWrite', filename])
     send_packet(sock, ['DP', encode_payload(text)])
     show_result(read_reply(receiver))
+
+def show_menu():
+    print()
+    print('1) mkdir      - create a folder')
+    print('2) cd         - change a folder')
+    print('3) rmdir      - delete a folder')
+    print('4) del        - delete a file')
+    print('5) ren        - rename a file or folder')
+    print('6) other system command')
+    print('7) openRead   - read a file on the server')
+    print('8) openWrite  - write a file on the server')
+    print('9) quit')
+
+def command_loop(sock,receiver):
+    #keeps showing the menu until the user chooses quit
+    while True:
+        show_menu()
+        choice =  input('Choose an option:').strip()
+
+        if choice == '1':
+            run_prompt(sock, reciever, 'mkdir' + input('Folder name: '))
+        elif choice == '2':
+            run_prompt(sock, receiver, 'cd' + input('Folder name: '))
+        elif choice == '3':
+            run_prompt(sock, receiver, 'rmdir' + input('Folder name: '))
+        elif choice == '4':
+            run_prompt(sock, receiver, 'del' + input('File name: '))
+        elif choice == '5':
+            old_name =  input('Current name: ')
+            new_name = input('New name: ')
+            run_prompt(sock, receiver, 'ren' + old_name + '' + new_name)
+        elif choice == '6':
+            run_prompt(sock, receiver, input('Command: '))
+        elif choice == '7':
+            read_file(sock, receiver, input('File name: '))
+        elif choice == '8':
+            write_file(sock, receiver, input('File name: '))
+        elif choice == '9':
+            break
+        else:
+            print('Please choose a number from 1 to 9.')
