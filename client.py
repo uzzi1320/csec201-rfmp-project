@@ -110,3 +110,23 @@ def command_loop(sock,receiver):
             break
         else:
             print('Please choose a number from 1 to 9.')
+
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect((HOST, PORT))
+    except OSError:
+        print(f'Could not connect to {HOST}:{PORT}. Is the server running? ')
+        return
+
+    receiver = PacketReceiver(sock)
+
+    if setup_phase(sock, receiver):
+        command_loop(sock, receiver)
+        send_packet(sock, ['End']) #closing phase
+
+    sock.close()
+    print('Connection closed.')
+
+if __name__ == '__main__':
+    main()
