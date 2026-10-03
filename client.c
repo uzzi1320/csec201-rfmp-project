@@ -99,7 +99,6 @@ int main(int argc, char *argv[])
     char line[LINE_MAX_LEN];                 // holds packets we receive
     char out[LINE_MAX_LEN];                  // holds packets we build to send
 
-
 #ifdef _WIN32
     WSADATA wsa;                             // Windows-only: start the socket library
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
