@@ -162,6 +162,13 @@ int main(int argc, char *argv[])
         } else if (strcmp(line, "SC") == 0 || strncmp(line, "SC,", 3) == 0) {  // success
             printf("----- end (server: success) -----\n");
             break;                           // server is done sending
+        } else if (strncmp(line, "EE,", 3) == 0) {  // Exception Event: EE,<code>,<description>
+            char *code = line + 3;           // error code starts after "EE,"
+            char *desc = strchr(code, ',');  // find the comma between code and description
+            if (desc) { *desc = '\0'; desc++; } else { desc = ""; }  // split into two strings
+            fprintf(stderr, "[C client] Server error %s: %s\n", code, desc);
+            got_error = 1;
+            break;                           // stop reading after an error
         } else {                             // anything else is not in our protocol
             fprintf(stderr, "[C client] Unexpected packet: %s\n", line);
             got_error = 1;
