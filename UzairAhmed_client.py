@@ -99,7 +99,7 @@ def command_loop(sock,receiver):
         elif choice == '5':
             old_name =  input('Current name: ')
             new_name = input('New name: ')
-            run_prompt(sock, receiver, 'ren ' + old_name + '' + new_name)
+            run_prompt(sock, receiver, 'ren ' + old_name + ' ' + new_name)
         elif choice == '6':
             run_prompt(sock, receiver, input('Command: '))
         elif choice == '7':
