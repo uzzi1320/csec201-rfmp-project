@@ -64,6 +64,33 @@ static int recv_packet(sock_t s, char *buf, size_t cap)
     buf[i] = '\0';                           // end the C string
     return (int)i;                           // number of characters in the packet
 }
+
+/*
+ * Decode base64 text into raw bytes. The server base64-encodes the file
+ * content so commas/newlines in the file can't break the packet format.
+ * Base64 uses 64 symbols (A-Z a-z 0-9 + /), each worth 6 bits; every 4
+ * symbols give back 3 original bytes. '=' at the end is just padding.
+ * Returns number of decoded bytes written to out.
+ */
+static size_t b64_decode(const char *in, unsigned char *out)
+{
+    const char *table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t o = 0;                            // bytes written to out so far
+    unsigned int buf = 0;                    // holds bits waiting to become bytes
+    int bits = 0;                            // how many valid bits are in buf
+    for (const char *p = in; *p && *p != '='; p++) {   // stop at end or padding
+        const char *pos = strchr(table, *p); // find this symbol's 6-bit value
+        if (!pos) continue;                  // skip anything that isn't base64
+        buf = (buf << 6) | (unsigned int)(pos - table);  // add 6 new bits
+        bits += 6;
+        if (bits >= 8) {                     // we have a full byte
+            bits -= 8;
+            out[o++] = (unsigned char)((buf >> bits) & 0xFF);  // take the top 8 bits
+        }
+    }
+    return o;                                // length of decoded data
+}
+
 int main(int argc, char *argv[])
 {
     const char *host = (argc > 1) ? argv[1] : DEFAULT_HOST;      // IP from args or default
