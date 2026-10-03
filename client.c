@@ -31,7 +31,7 @@
 #define DEFAULT_HOST "127.0.0.1"    // server on this same laptop
 #define DEFAULT_PORT 5000           // TODO: confirm port with Person A
 #define DEFAULT_FILE "data.txt"     // file to ask the server to read
-#define LINE_MAX_LEN 8192           // biggest packet we can hold in memory
+#define LINE_MAX_LEN 65536           // biggest packet we can hold in memory
 
 /* Send the whole string; send() may write fewer bytes than we asked for. */
 static int send_all(sock_t s, const char *msg)
