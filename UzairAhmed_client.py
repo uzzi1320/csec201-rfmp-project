@@ -89,17 +89,17 @@ def command_loop(sock,receiver):
         choice =  input('Choose an option:').strip()
 
         if choice == '1':
-            run_prompt(sock, reciever, 'mkdir' + input('Folder name: '))
+            run_prompt(sock, receiver, 'mkdir ' + input('Folder name: '))
         elif choice == '2':
-            run_prompt(sock, receiver, 'cd' + input('Folder name: '))
+            run_prompt(sock, receiver, 'cd ' + input('Folder name: '))
         elif choice == '3':
-            run_prompt(sock, receiver, 'rmdir' + input('Folder name: '))
+            run_prompt(sock, receiver, 'rmdir ' + input('Folder name: '))
         elif choice == '4':
-            run_prompt(sock, receiver, 'del' + input('File name: '))
+            run_prompt(sock, receiver, 'del ' + input('File name: '))
         elif choice == '5':
             old_name =  input('Current name: ')
             new_name = input('New name: ')
-            run_prompt(sock, receiver, 'ren' + old_name + '' + new_name)
+            run_prompt(sock, receiver, 'ren ' + old_name + '' + new_name)
         elif choice == '6':
             run_prompt(sock, receiver, input('Command: '))
         elif choice == '7':
