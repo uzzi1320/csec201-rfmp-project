@@ -2,6 +2,10 @@ import os
 import socket
 import threading
 from packet_utils import encode_packet, encode_payload, decode_payload, PacketReceiver
+try:
+    import encryption
+except ImportError:
+    encryption = None
 
 # Error codes for Exception-Packets (EE)
 ERR_BAD_REQUEST = '1'
@@ -27,6 +31,20 @@ def send_error(conn, code, description):
     #flattening commas and newlines since they would break packet framing
     description = str(description).replace(',',';').replace('\r',' ').replace('\n',' ')
     conn.sendall(encode_packet(['EE', code, description]))
+
+def encrypt_text(session, text):
+    """
+    To encrypt text with the session's key, using whichever algorithm the client chooses
+    """
+    if session['algorithm'] == 'aes':
+        return encryption.aes_encrypt(text, session['key'])
+    return encryption.caesar_encrypt(text, session['key'])
+
+def decrypt_text(session, text):
+    """Decrypt text with the session's key, using whichever algorithm the client chose."""
+    if session['algorithm'] == 'aes':
+        return encryption.aes_decrypt(text, session['key'])
+    return encryption.caesar_decrypt(text, session['key'])
 
 def run_prompt_command(conn, command_text):
     """Runs a system command sent as (CM, prompt, full command text),
@@ -58,7 +76,7 @@ def run_prompt_command(conn, command_text):
     else:
         send_error(conn, ERR_COMMAND_FAILED, 'Command failed')
 
-def open_read(conn, filename):
+def open_read(conn, session, filename):
     """
     openRead sends the file's content to the client in a Data-Packet, then ends with a SC packet
     """
@@ -72,10 +90,18 @@ def open_read(conn, filename):
         send_error(conn, ERR_SERVER, e)
         return
 
-    conn.sendall(encode_packet(['DP', encode_payload(content)]))
-    conn.sendall(encode_packet(['SC']))
+    try:
+        if session['secure']:
+            text = content.decode('utf-8')
+            text = encrypt_text(session, text)
+        else:
+            text = content
+        conn.sendall(encode_packet(['DP', encode_payload(text)]))
+        conn.sendall(encode_packet(['SC']))
+    except Exception as e:
+        send_error(conn, ERR_SERVER, e)
 
-def open_write(conn, receiver, filename):
+def open_write(conn, receiver, session, filename):
     """
     the files content arrive in a seperate Data-PAcket right after the command, openWrite saves it to the file
     """
@@ -85,12 +111,65 @@ def open_write(conn, receiver, filename):
         return
     try:
         content = decode_payload(data[1])
+        if session['secure']:
+            text = content.decode('utf-8')
+            text = decrypt_text(session, text)
+            content = text.encode('utf-8')
         with open(filename, 'wb') as f:
             f.write(content)
         conn.sendall(encode_packet(['SC']))
     except Exception as e:
         send_error(conn, ERR_SERVER, e)
+            
 
+def setup_phase(conn, receiver):
+    """
+    Handles the setup phase for one client.
+    Returns a session dict, or None if setup fails
+    """
+    fields = receiver.get_packet()
+    if fields is None:
+        return None
+
+    if (len(fields) != 4 or fields[0] != 'SS' or fields[1] != 'RFMP'
+        or fields[2] != 'v1.0' or fields[3] not in ('0','1')):
+        send_error(conn, ERR_BAD_REQUEST, 'Invalid Start-Packet')
+        return None
+
+    security_flag = fields[3]
+    print(f"Received Start-Packet security flag={security_flag}")
+
+    if security_flag == '0':
+        conn.sendall(encode_packet(['CC']))
+        return {'secure': False}
+
+    if encryption is None:
+        send_error(conn, ERR_SERVER, 'Secure communication is not available on this server')
+        return None
+
+    public_key, private_key = encryption.generate_rsa_keypair()
+    conn.sendall(encode_packet(['CC',public_key]))
+
+    ec = receiver.get_packet()
+    if ec is None or ec[0] != 'EC' or len(ec) < 4:
+        send_error(conn, ERR_BAD_REQUEST, "Expected Encryption-Packet")
+        return None
+
+    algorithm = ec[1].strip().lower()
+    if algorithm not in ('aes', 'caesar'):
+        send_error(conn, ERR_BAD_REQUEST, "Unknown encryption algorithm")
+        return None
+
+    try:
+        session_key = encryption.rsa_decrypt(ec[2], private_key)
+    except Exception:
+        send_error(conn, ERR_SERVER, 'Could not decrypt session key')
+        return None
+
+    print(f"Secure connection established, algorithm={algorithm}")
+    return {'secure': True, 'algorithm':algorithm, 'key':session_key}
+
+    
 def handle_client(conn, addr):
     """
     Runs in its own thread for each connected client.
@@ -103,30 +182,12 @@ def handle_client(conn, addr):
     #regardless of how TCP splits the bytes
     receiver = PacketReceiver(conn)
 
-    #block until the client's first packet arrives - this should be the Start-packet
-    fields = receiver.get_packet()
-
-    if fields is None:
-        #client disconnects before sending anything
+    session = setup_phase(conn, receiver)
+    if session is None:
         conn.close()
         return
 
-    if (len(fields) != 4 or fields[0] != 'SS' or fields[1] != 'RFMP'
-        or fields[2] != 'v1.0' or fields[3] not in ('0','1')):
-        send_error(conn, ERR_BAD_REQUEST,'Invalid Start-Packet')
-        conn.close()
-        return
 
-    security_flag = fields[3]
-    print(f"Received Start-Packet, security flag={security_flag}")
-
-    if security_flag == '1':
-        # TODO: secured setup
-        send_error(conn, ERR_SERVER, 'Secure communication is not available yet')
-        conn.close()
-        return
-
-    conn.sendall(encode_packet(['CC']))
 
     while True:
         # blocks until the client's next packet arrives
@@ -156,9 +217,9 @@ def handle_client(conn, addr):
         if command_type == 'prompt':
             run_prompt_command(conn, argument)
         elif command_type == 'openRead':
-            open_read(conn, argument)
+            open_read(conn, session, argument)
         elif command_type == 'openWrite':
-            open_write(conn, receiver, argument)
+            open_write(conn, receiver, session, argument)
         else:
             send_error(conn, ERR_BAD_REQUEST, f'Unknown command type: {command_type}')
 
