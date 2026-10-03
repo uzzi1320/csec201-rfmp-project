@@ -143,6 +143,32 @@ int main(int argc, char *argv[])
     }
     printf("[C client] Got Confirm-Connection-Packet (CC)\n");
 
+    /* ---------- operation phase: openRead ---------- */
+    snprintf(out, sizeof(out), "CM,openRead,%s\n", file);  // build CM,openRead,<file>\n
+    if (send_all(sock, out) < 0) {           // send the command packet
+        fprintf(stderr, "send failed\n");
+        return 1;
+    }
+    printf("[C client] Sent: CM,openRead,%s\n", file);
+
+    printf("----- file contents -----\n");
+    int got_error = 0;                       // remember if the server reported an error
+    while (recv_packet(sock, line, sizeof(line)) >= 0) {   // read reply packets one by one
+        if (strncmp(line, "DP,", 3) == 0) {  // Data Packet: DP,<base64 file content>
+            static unsigned char decoded[LINE_MAX_LEN];   // room for the decoded bytes
+            size_t n = b64_decode(line + 3, decoded);     // decode the field after "DP,"
+            fwrite(decoded, 1, n, stdout);   // print the real file content (may have newlines)
+            printf("\n");
+        } else if (strcmp(line, "SC") == 0 || strncmp(line, "SC,", 3) == 0) {  // success
+            printf("----- end (server: success) -----\n");
+            break;                           // server is done sending
+        } else {                             // anything else is not in our protocol
+            fprintf(stderr, "[C client] Unexpected packet: %s\n", line);
+            got_error = 1;
+            break;
+        }
+    }
+
 
     return 0;
 }
