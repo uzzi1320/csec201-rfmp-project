@@ -176,6 +176,13 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* ---------- closing phase ---------- */
+    send_all(sock, "End\n");                 // tell the server we're finished
+    printf("[C client] Sent Close-Packet: End\n");
 
-    return 0;
+    CLOSESOCK(sock);                         // close the connection
+#ifdef _WIN32
+    WSACleanup();                            // Windows-only: shut down the socket library
+#endif
+    return got_error ? 1 : 0;                // exit code 0 = ok, 1 = error
 }
